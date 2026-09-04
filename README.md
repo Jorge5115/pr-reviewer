@@ -54,41 +54,69 @@ POST /review
 - `severity`: `INFO` | `WARNING` | `CRITICAL`
 - `category`: `BUG` | `SECURITY` | `STYLE` | `PERFORMANCE` | `BEST_PRACTICE`
 
+### Endpoint alternativo: revisar un PR real de GitHub
+
+```json
+POST /review/github
+{
+  "owner": "usuario-o-org",
+  "repo": "nombre-del-repo",
+  "prNumber": 1
+}
+```
+
+Trae automáticamente los archivos modificados del PR (vía GitHub API, con token propio), y devuelve un único `ReviewResponse` combinando los comentarios de todos los archivos con diff (los archivos binarios sin `patch` se saltan). Requiere `GITHUB_TOKEN` como variable de entorno (token personal classic, scope `public_repo` o `repo` según el caso, sin fecha de expiración indefinida por seguridad).
+
 ## Estructura del proyecto
 
 ```
 com.jorge.prreviewer
-├── controller/   → ReviewController (expone POST /review)
-├── dto/          → ReviewRequest, ReviewResponse, ReviewComment
+├── controller/   → ReviewController (POST /review, POST /review/github)
+├── dto/          → ReviewRequest, ReviewResponse, ReviewComment, GitHubReviewRequest
 ├── service/      → ReviewService (orquesta la llamada al LLM y arma la respuesta)
-├── llm/          → LlmClient (interfaz) + GeminiClient (implementación)
+├── llm/          → LlmClient (interfaz) + GeminiClient (implementación, con backoff exponencial y structured output nativo)
+├── github/       → GitHubClient (trae los archivos/diffs de un PR real vía GitHub API)
 ├── exception/    → InvalidDiffException, LlmResponseException
-├── config/       → LlmConfig (bean del cliente HTTP hacia Gemini + API key)
+├── config/       → LlmConfig (WebClient Gemini), GitHubConfig (WebClient GitHub)
 └── PrReviewerApplication
 ```
 
 Cada paquete tiene una responsabilidad única:
-- `config/` cablea el cliente HTTP y las credenciales, sin lógica de negocio.
-- `llm/` habla con el proveedor externo y devuelve la respuesta cruda.
-- `service/` decide qué hacer con esa respuesta (parsear, reintentar si falla, mapear al DTO final).
-- `controller/` solo expone el endpoint, sin lógica.
+- `config/` cablea los clientes HTTP y las credenciales, sin lógica de negocio.
+- `llm/` habla con Gemini y devuelve la respuesta (ya parseada gracias al schema forzado a nivel de API).
+- `github/` habla con la API de GitHub y devuelve los archivos/diffs de un PR.
+- `service/` decide qué hacer con la respuesta del LLM (parsear, reintentar si falla, mapear al DTO final).
+- `controller/` solo expone los endpoints, sin lógica.
 
-## Estado del proyecto: MVP funcional completo
+## Estado del proyecto: completo, listo para pulir y publicar
 
-Todas las tareas base están cerradas:
+Todas las tareas base y las tres mejoras post-MVP están cerradas:
 
+**MVP base:**
 1. DTOs (`ReviewRequest`, `ReviewResponse`, `ReviewComment`) + `ReviewController` (endpoint real, no mock)
 2. `LlmConfig` — bean `WebClient` hacia Gemini, API key vía variable de entorno (`GEMINI_API_KEY`), nunca hardcodeada
-3. `LlmClient` (interfaz) + `GeminiClient` (implementación) — llamada real a `gemini-3.6-flash`
-4. `ReviewService` — prompt estructurado + parseo a JSON con `JsonMapper` (Jackson 3)
+3. `LlmClient` (interfaz) + `GeminiClient` (implementación) — llamada real a `gemini-3.6-flash` / `gemini-3.5-flash-lite`
+4. `ReviewService` — prompt + parseo a JSON con `JsonMapper` (Jackson 3)
 5. Manejo de errores: `InvalidDiffException` → `400` vía `@RestControllerAdvice` (no `500`); reintento (máx. 2) + `ReviewComment` de fallback si el LLM no devuelve JSON válido
-6. Tests: `ReviewServiceTest` (unitarios, Mockito, `LlmClient` mockeado — caso feliz, fallback, reintento exitoso) + `ReviewServiceEvaluationTest` (integración real contra Gemini, mide si detecta la categoría esperada en 5 diffs con bugs reales)
+6. Tests: `ReviewServiceTest` (unitarios, Mockito) + `ReviewServiceEvaluationTest` (integración real contra Gemini, mide detección en 5 diffs con bugs reales)
 
-### Roadmap / posibles extensiones (no bloqueantes)
+**Mejoras post-MVP:**
+7. Backoff exponencial en `GeminiClient` (reintenta 429/503 con espera creciente 1s→2s→4s, en vez de fallar directo)
+8. Structured output nativo de Gemini (`responseSchema` a nivel de API en vez de solo pedir JSON por prompt — más fiable, menos parseos fallidos)
+9. Integración con GitHub API: `GitHubClient` + endpoint `POST /review/github`, que trae los archivos de un PR real y reutiliza `ReviewService` para cada uno
 
-- **v2**: migrar a *structured output* nativo de Gemini (JSON Schema forzado a nivel de API) en vez de parseo manual — comparar ambos enfoques es parte del valor del proyecto de cara a una entrevista.
-- Conectar con la API de GitHub para traer el diff directamente de un PR (`GET /repos/{owner}/{repo}/pulls/{pr}/files`), en vez de pegado a mano.
+### Pendiente para publicar (mañana)
+
+- Revisar/limpiar el código generado por OpenCode una última vez (nombres, comentarios sobrantes)
+- Confirmar que `.gitignore` excluye cualquier archivo con secretos (nunca se hardcodeó ninguna key, pero vale la pena verificar)
+- Pulir este README como carta de presentación del repo
+- Decidir si el token de GitHub necesita instrucciones más claras para quien clone el repo (README de setup)
+
+### Roadmap / posibles extensiones futuras (no bloqueantes)
+
 - Guardar histórico de reviews en base de datos (JPA) y cachear resultados por hash de diff (Redis).
+- Backoff exponencial también en `GitHubClient` (de momento solo lo tiene `GeminiClient`).
+- Panel/CLI simple para lanzar `POST /review/github` sin depender de Postman.
 
 ## Hallazgos de la capa de evaluación
 
@@ -115,4 +143,4 @@ Es un patrón que ya usan productos comerciales reales (CodeRabbit, GitHub Copil
 
 ## Cómo se está construyendo
 
-El proyecto se está desarrollando con ayuda de [OpenCode](https://opencode.ai) (agente de código en terminal), por tareas pequeñas y revisadas una a una, no generadas de golpe.
+El proyecto se está desarrollando con ayuda de [OpenCode](https://opencode.ai) (agente de código en terminal), por tareas pequeñas y revisadas una a una, no generado de golpe.
