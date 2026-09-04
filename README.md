@@ -115,4 +115,4 @@ Es un patrón que ya usan productos comerciales reales (CodeRabbit, GitHub Copil
 
 ## Cómo se está construyendo
 
-El proyecto se está desarrollando con ayuda de [OpenCode](https://opencode.ai) (agente de código en terminal), por tareas pequeñas y revisadas una a una, no generado de golpe.
+El proyecto se está desarrollando con ayuda de [OpenCode](https://opencode.ai) (agente de código en terminal), por tareas pequeñas y revisadas una a una, no generadas de golpe.
